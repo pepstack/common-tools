@@ -1,0 +1,65 @@
+{{license_header}}
+/**
+ * xstpapi.h
+ *   {{module}} api declaration
+ *
+ * @author: {{dictcfg.Author}}
+ * @version: {{dictcfg.Version}}
+ * @create: {{dictcfg.Create}}
+ * @update: {{dictcfg.Update}}
+ */
+
+#ifndef XSTPAPI_H_INCLUDED
+#define XSTPAPI_H_INCLUDED
+
+#if defined(__cplusplus)
+extern "C"
+{
+#endif
+
+#include "xstpdef.h"
+#include "xstperr.h"
+
+
+typedef struct xstp_envelope_t * XSTP_env;
+typedef struct xstp_request_t  * XSTP_req;
+typedef struct xstp_response_t * XSTP_resp;
+
+
+/**
+ * envelope api
+ */
+extern ssize_t XSTP_env_pack (const XSTP_env E, char *outbuf, ub2 bufsz);
+
+extern int XSTP_env_unpack (const char *inbuf, ub2 bufsz, XSTP_env OE);
+
+extern ssize_t XSTP_env_print (const XSTP_env E, char *outbuf, size_t bufsz);
+
+{% for proto, protoDict in dictcfg.Protocols.items() %}
+{%- if protoDict.Request %}
+/**
+ * {{proto}} request
+ */
+extern void XSTP_{{proto}}_req_build (XSTP_req R, randctx64 *rctx, ub8 magic, tpl_bin *B);
+
+extern int XSTP_{{proto}}_req_parse (void *inbuf, ub4 bufcb, ub8 magic, XSTP_req R);
+
+extern void XSTP_{{proto}}_req_print (const XSTP_req R);
+{% endif %}
+
+{%- if protoDict.Response %}
+/**
+ * {{proto}} response
+ */
+extern void XSTP_{{proto}}_resp_build (XSTP_resp R, randctx64 *rctx, ub8 magic, tpl_bin *B);
+
+extern int XSTP_{{proto}}_resp_parse (void *inbuf, ub4 bufcb, ub8 magic, XSTP_resp R);
+
+extern void XSTP_{{proto}}_resp_print (const XSTP_resp R);
+{% endif %}
+{% endfor %}
+#if defined(__cplusplus)
+}
+#endif
+
+#endif /* XSTPAPI_H_INCLUDED */

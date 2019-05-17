@@ -1,0 +1,37 @@
+###########################################################
+# type: optional string default
+# help: mandantory string
+# $APPHOME: 会自动替换为 python 程序所在路径
+# $APPNAME: 会自动替换为 python 程序名
+###########################################################
+main:
+    title: $APPNAME
+    description: $APPHELP
+    options:
+        - log_path:
+            optarg: '-O --log-path'
+            action: store
+            type: string
+            default: '/var/log/pyapplog'
+            help: 'path to app log file'
+            metavar: LOGPATH
+
+        - log_level:
+            optarg: '-L --log-level'
+            action: store
+            type: string
+            default: DEBUG
+            help: 'log level: DEBUG, WARN, INFO, ERROR'
+            metavar: LOGLEVEL
+
+        - log_config:
+            optarg: '-C --log-config'
+            default: '$APPHOME/config/logger.config'
+            help: 'path to logger config file'
+            metavar: LOGCONFIG
+
+        - logger:
+            optarg: '--logger'
+            default: 'main'
+            help: 'logger name in log config file'
+            metavar: LOGGER

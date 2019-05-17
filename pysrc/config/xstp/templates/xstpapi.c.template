@@ -1,0 +1,632 @@
+{{license_header}}
+/**
+ * xstpapi.c
+ *   {{module}} api implement
+ *
+ * @author: {{dictcfg.Author}}
+ * @version: {{dictcfg.Version}}
+ * @create: {{dictcfg.Create}}
+ * @update: {{dictcfg.Update}}
+ */
+
+#include "xstpapi.h"
+
+#include "common/crc32.h"
+#include "common/md5sum.h"
+#include "common/rc4.h"
+
+
+static ub8 xstp_gen_encrypt (ub8 randnum, ub8 magic, ub16_digit_t *encrypt)
+{
+    ub8 ub8Cipher = htobe64(randnum);
+    ub8 ub8Magic = htobe64(magic);
+
+    /* make cipher used to encrypt chunk */
+    rc4_encrypt((char *)&ub8Cipher, sizeof ub8Cipher, (char *)&ub8Magic, sizeof ub8Magic);
+
+    md5digit(&ub8Cipher, sizeof(ub8Cipher), (ub4)(0x00000000ffffffff & magic), encrypt);
+
+    return ub8Cipher;
+}
+
+
+static void xstp_request_build (tpl_bin *tbcont, const void *command, randctx64 *rctx, xstp_request_t *R, tpl_bin *B)
+{
+    tpl_node *tn;
+
+    char envbuf[256];
+
+    tpl_bin tbenv = { envbuf, sizeof(envbuf) };
+
+    memcpy(&R->Envelope.protocol, &XSTP_PROTOCOL_TAG, sizeof(R->Envelope.protocol));
+    memcpy(&R->Envelope.command, command, sizeof(R->Envelope.command));
+
+    R->Envelope.major_ver = XSTP_PROTOCOL_MAJOR_VER;
+    R->Envelope.minor_ver = XSTP_PROTOCOL_MINOR_VER;
+
+    R->Envelope.bf_timestamp = 1;
+    R->Envelope.bf_randnum = 1;
+    R->Envelope.bf_checksum = 1;
+    R->Envelope.bf_encrypt = 1;
+
+    R->Envelope.timestamp = nowtime_msec();
+
+    R->Envelope.content_sz = tbcont->sz;
+
+    if (rctx) {
+        R->Envelope.randnum = rand64_gen(rctx);
+    } else {
+        randctx64  rndctx;
+        randctx64_init(&rndctx, R->Envelope.timestamp);
+        R->Envelope.randnum = rand64_gen(&rndctx);
+    }
+
+    R->cipher = xstp_gen_encrypt(R->Envelope.randnum, R->magic, &R->Envelope.encrypt);
+
+    if (R->Envelope.bf_encrypt) {
+        /* cipher used to encrypt content */
+        rc4_encrypt((char *)tbcont->addr, tbcont->sz, (char *)&R->cipher, sizeof R->cipher);
+    }
+
+    R->Envelope.checksum = crc32(0, tbcont->addr, tbcont->sz);
+
+    tbenv.sz = XSTP_env_pack(&R->Envelope, tbenv.addr, (ub2) tbenv.sz);
+    if (tbenv.sz < 0 ) {
+        exitlog_msg(-1, "sytp", "insuff buf");
+    }
+
+    tn = tpl_map("BB", &tbenv, tbcont);
+    if (! tn) {
+        exitlog_oom("sytp");
+    }
+
+    if (tpl_pack(tn, 0) != 0) {
+        tpl_free(tn);
+        exitlog_msg(-1, "sytp", "tpl_pack failed");
+    }
+
+    if (dump_bin(tn, B) != 0) {
+        tpl_free(tn);
+        exitlog_oom("sytp");
+    }
+
+    tpl_free(tn);
+}
+
+
+static int xstp_request_parse (void * msg, ub4 msgcb, ub8 magic, const void *command, xstp_request_t *R)
+{
+    int err;
+    tpl_node *tn;
+
+    ub8 cipher;
+    ub16_digit_t encryptKey;
+
+    tpl_bin tbenv = {0, 0};
+    tpl_bin tbcont = {0, 0};
+
+    tn = tpl_map("BB", &tbenv, &tbcont);
+    if (! tn) {
+        exitlog_oom("sytp");
+    }
+
+    if (tpl_load(tn, TPL_MEM /* | TPL_EXCESS_OK */, msg, msgcb) != 0) {
+        tpl_free(tn);
+        return XSTP_ERR_TPL_LOAD;
+    }
+
+    err = tpl_unpack(tn, 0);
+    tpl_free(tn);
+    if (err < 1) {
+        return XSTP_ERR_TPL_UNPACK;
+    }
+
+    err = XSTP_env_unpack((const char *) tbenv.addr, (ub2) tbenv.sz, &R->Envelope);
+
+    tplbin_free(&tbenv);
+
+    if (err != XSTP_SUCCESS) {
+        tplbin_free(&tbcont);
+
+        return XSTP_ERR_ENV_UNPACK;
+    }
+
+    if (memcmp(&R->Envelope.protocol, &XSTP_PROTOCOL_TAG, sizeof(R->Envelope.protocol))) {
+        /* error protocol: Not SYTP */
+        tplbin_free(&tbcont);
+
+        return XSTP_ERR_PROTOCOL;
+    }
+    if (memcmp(&R->Envelope.command, command, sizeof(R->Envelope.command))) {
+        /* error command */
+        tplbin_free(&tbcont);
+
+        return XSTP_ERR_COMMAND;
+    }
+
+    /* TODO: how to check protocol version ? */
+    if (R->Envelope.major_ver != XSTP_PROTOCOL_MAJOR_VER) {
+        /* error version: Not 1.xx */
+        tplbin_free(&tbcont);
+
+        return XSTP_ERR_PROTOVER;
+    }
+
+    cipher = xstp_gen_encrypt(R->Envelope.randnum, magic, &encryptKey);
+
+    if (memcmp(&encryptKey, &R->Envelope.encrypt, sizeof(encryptKey))) {
+        /* encrypt not matched */
+        tplbin_free(&tbcont);
+
+        return XSTP_ERR_ENCRYPT;
+    }
+
+    if (R->Envelope.checksum != crc32(0, tbcont.addr, tbcont.sz)) {
+        /* error checksum */
+        tplbin_free(&tbcont);
+
+        return XSTP_ERR_CHECKSUM;
+    }
+
+    /* cipher used to decrypt content */
+    rc4_encrypt((char *) tbcont.addr, tbcont.sz, (char *)&cipher, sizeof cipher);
+
+    R->pairs = kvpairs_unpack(&tbcont, 8);
+
+    tplbin_free(&tbcont);
+
+    if (! R->pairs) {
+        /* error */
+        return XSTP_ERR_TPL_UNPACK;
+    }
+
+    kvmap_init(&R->kvmap);
+    kvpairs_to_map(R->pairs, &R->kvmap);
+
+    R->magic = magic;
+    R->cipher = cipher;
+
+    return XSTP_SUCCESS;
+}
+
+
+
+static void xstp_response_build (tpl_bin *tbcont, const void *command, randctx64 *rctx, xstp_response_t *R, tpl_bin *B)
+{
+
+}
+
+
+static int xstp_response_parse (void * msg, ub4 msgcb, ub8 magic, const void *command, xstp_response_t *R)
+{
+
+    return XSTP_SUCCESS;
+}
+
+
+/**
+ * envelope api
+ */
+ssize_t XSTP_env_pack (const XSTP_env E, char *outbuf, ub2 bufsize)
+{
+    ub4 ub4Val;
+    ub8 ub8Val;
+
+    ub2 offcb = 0;
+
+    if (bufsize < sizeof(ub4Val) * 5) {
+        return (-1);
+    }
+
+    bcopy(&E->protocol, outbuf + offcb, sizeof(E->protocol));
+    offcb += sizeof(E->protocol);
+
+    bcopy(&E->version, outbuf + offcb, sizeof(E->version));
+    offcb += sizeof(E->version);
+
+    bcopy(&E->command, outbuf + offcb, sizeof(E->command));
+    offcb += sizeof(E->command);
+
+    ub4Val = htobe32(E->content_sz);
+    bcopy(&ub4Val, outbuf + offcb, sizeof ub4Val);
+    offcb += sizeof ub4Val;
+
+    bcopy(&E->bitflags, outbuf + offcb, sizeof(E->bitflags));
+    offcb += sizeof(E->bitflags);
+
+    if (E->bitflags) {
+        if (E->bf_timestamp) {
+            if (bufsize < offcb + sizeof ub8Val) {
+                return (-1);
+            }
+
+            ub8Val = htobe64(E->timestamp);
+            bcopy(&ub8Val, outbuf + offcb, sizeof ub8Val);
+            offcb += sizeof ub8Val;
+        }
+
+        if (E->bf_randnum) {
+            if (bufsize < offcb + sizeof ub8Val) {
+                return (-1);
+            }
+
+            ub8Val = htobe64(E->randnum);
+            bcopy(&ub8Val, outbuf + offcb, sizeof ub8Val);
+            offcb += sizeof ub8Val;
+        }
+
+        if (E->bf_checksum) {
+            if (bufsize < offcb + sizeof ub4Val) {
+                return (-1);
+            }
+
+            ub4Val = htobe32(E->checksum);
+            bcopy(&ub4Val, outbuf + offcb, sizeof ub4Val);
+            offcb += sizeof ub4Val;
+        }
+
+        if (E->bf_encrypt) {
+            if (bufsize < offcb + sizeof E->encrypt) {
+                return (-1);
+            }
+
+            bcopy(&E->encrypt, outbuf + offcb, sizeof E->encrypt);
+            offcb += sizeof E->encrypt;
+        }
+    }
+
+    return offcb;
+}
+
+
+int XSTP_env_unpack (const char *inbuf, ub2 bufsize, XSTP_env OE)
+{
+    ub4 ub4Val;
+    ub8 ub8Val;
+
+    ub2 offcb = 0;
+    
+    if (bufsize < sizeof(ub4Val) * 5) {
+        return XSTP_ERROR;
+    }
+
+    bcopy(inbuf + offcb, &OE->protocol, sizeof(OE->protocol));
+    offcb += sizeof(OE->protocol);
+
+    bcopy(inbuf + offcb, &OE->version, sizeof(OE->version));
+    offcb += sizeof(OE->version);
+
+    bcopy(inbuf + offcb, &OE->command, sizeof(OE->command));
+    offcb += sizeof(OE->command);
+
+    bcopy(inbuf + offcb, &ub4Val, sizeof ub4Val);
+    OE->content_sz = be32toh(ub4Val);
+    offcb += sizeof ub4Val;
+
+    bcopy(inbuf + offcb, &OE->bitflags, sizeof(OE->bitflags));
+    offcb += sizeof(OE->bitflags);
+
+    if (OE->bitflags) {
+        if (OE->bf_timestamp) {
+            if (bufsize < offcb + sizeof ub8Val) {
+                return XSTP_ERROR;
+            }
+
+            bcopy(inbuf + offcb, &ub8Val, sizeof ub8Val);
+            OE->timestamp = be64toh(ub8Val);
+            offcb += sizeof ub8Val;
+        }
+
+        if (OE->bf_randnum) {
+            if (bufsize < offcb + sizeof ub8Val) {
+                return XSTP_ERROR;
+            }
+
+            bcopy(inbuf + offcb, &ub8Val, sizeof ub8Val);
+            OE->randnum = be64toh(ub8Val);
+            offcb += sizeof ub8Val;
+        }
+
+        if (OE->bf_checksum) {
+            if (bufsize < offcb + sizeof ub4Val) {
+                return XSTP_ERROR;
+            }
+
+            bcopy(inbuf + offcb, &ub4Val, sizeof ub4Val);
+            OE->checksum = be32toh(ub4Val);
+            offcb += sizeof ub4Val;
+        }
+
+        if (OE->bf_encrypt) {
+            if (bufsize < offcb + sizeof OE->encrypt) {
+                return XSTP_ERROR;
+            }
+
+            bcopy(inbuf + offcb, &OE->encrypt, sizeof OE->encrypt);
+            offcb += sizeof OE->encrypt;
+        }
+    }
+
+    return XSTP_SUCCESS;
+}
+
+{% raw %}
+ssize_t XSTP_env_print (const XSTP_env E, char *buf, size_t sizebuf)
+{
+    ssize_t offlen = 0;
+
+    offlen = snprintf(buf, sizebuf,
+        "%%c%%c%%c%%c/%%d.%%d %%c%%c%%c%%c %%u %%u",
+            E->proto[0], E->proto[1], E->proto[2], E->proto[3],
+            E->major_ver, E->minor_ver,
+            E->cmd[0], E->cmd[1], E->cmd[2], E->cmd[3],
+            E->content_sz,
+            E->bitflags);
+
+    if (offlen < 0) {
+        return 0;
+    }
+
+    if (E->bitflags) {
+        int len;
+
+        if (E->bf_timestamp) {
+            if (sizebuf > offlen) {
+                len = snprintf(buf + offlen, sizebuf - offlen, " %%ju.%%03d", E->timestamp/1000, (int) (E->timestamp %% 1000));
+                if (len < 0) {
+                    return 0;
+                }
+                offlen += len;
+            }
+        }
+
+        if (E->bf_randnum) {
+            if (sizebuf > offlen) {
+                len = snprintf(buf + offlen, sizebuf - offlen, " 0x%%jx", E->randnum);
+                if (len < 0) {
+                    return 0;
+                }
+                offlen += len;
+            }
+        }
+
+        if (E->bf_checksum) {
+            if (sizebuf > offlen) {
+                len = snprintf(buf + offlen, sizebuf - offlen, " %%u", E->checksum);
+                if (len < 0) {
+                    return 0;
+                }
+                offlen += len;
+            }
+        }
+
+        if (E->bf_encrypt) {
+            if (sizebuf > offlen) {
+                len = snprintf(buf + offlen, sizebuf - offlen, " {%%08jx%%08jx}", E->encrypt.digit_a, E->encrypt.digit_b);
+                if (len < 0) {
+                    return 0;
+                }
+                offlen += len;
+            }
+        }
+    }
+
+    return offlen;
+}
+{% endraw %}
+
+{% for proto, protoDict in dictcfg.Protocols.items() %}
+{%- if protoDict.Request %}
+/**
+ * {{proto}} request
+ */
+void XSTP_{{proto}}_req_build (XSTP_req R, randctx64 *rctx, ub8 magic, tpl_bin *B)
+{
+    tpl_bin tbcont = {0, 0};
+    R->magic = magic;
+
+    do {
+        tpl_node *tn;
+        UT_array *pairs;
+
+        pairs = kvpairs_new({{ protoDict.Request.keys() | count }});
+        {% for memb, membDict in protoDict.Request.items() %}
+        {{membDict.render.Request.build}}
+        {%- endfor %}
+
+        tn = kvpairs_pack(pairs);
+
+        kvpairs_free(pairs);
+
+        if (dump_bin(tn, &tbcont) != 0) {
+            tpl_free(tn);
+            exitlog_oom("xstp");
+        }
+
+        tpl_free(tn);
+    } while(0);
+
+    xstp_request_build(&tbcont, &XSTP_COMMAND_{{protoDict.Command}}, rctx, R, B);
+
+    tplbin_free(&tbcont);
+}
+
+
+int XSTP_{{proto}}_req_parse (void *msg, ub4 msgcb, ub8 magic, XSTP_req R)
+{
+    int err;
+    ssize_t bufsz;
+
+    err = xstp_request_parse(msg, msgcb, magic, &XSTP_COMMAND_{{protoDict.Command}}, R);
+    if (err != XSTP_SUCCESS) {
+        return err;
+    }
+
+    /* TODO
+    bufsz = sizeof(R->Content.CONN.neuronid);
+    err = kvmap_get_str(&R->kvmap, "neuronid", R->Content.{{protoDict.Command}}.neuronid, &bufsz);
+    if (err != TPLUT_SOK) {
+        goto err_return;
+    }
+
+    bufsz = sizeof(R->Content.CONN.secret);
+    err = kvmap_get_str(&R->kvmap, "secret", R->Content.{{protoDict.Command}}.secret, &bufsz);
+    if (err != TPLUT_SOK) {
+        goto err_return;
+    }
+
+    bufsz = sizeof(R->Content.CONN.profile);
+    err = kvmap_get_str(&R->kvmap, "profile", R->Content.{{protoDict.Command}}.profile, &bufsz);
+    if (err != TPLUT_SOK) {
+        goto err_return;
+    }
+
+    err = kvmap_get_bin_cpy(&R->kvmap, "version", &R->Content.{{protoDict.Command}}.version, sizeof(R->Content.{{protoDict.Command}}.version));
+    if (err != TPLUT_SOK) {
+        goto err_return;
+    }
+    */
+
+    kvmap_uninit(&R->kvmap);
+    kvpairs_free(R->pairs);
+    return XSTP_SUCCESS;
+
+err_return:
+
+    kvmap_uninit(&R->kvmap);
+    kvpairs_free(R->pairs);
+    return XSTP_ERROR;
+}
+
+
+void XSTP_{{proto}}_req_print (const XSTP_req R)
+{
+    int len;
+    char envbuf[256];
+
+    len = XSTP_env_print(&R->Envelope, envbuf, sizeof envbuf);
+/*
+    printf("%%.*s\n"
+        ".neuronid=%%s\n"
+        ".secret=%%s\n"
+        ".profile=%%s\n"
+        ".version=%%d.%%d.%%d.%%d\n",
+        len, envbuf,
+        R->Content.{{protoDict.Command}}.neuronid,
+        R->Content.{{protoDict.Command}}.secret,
+        R->Content.{{protoDict.Command}}.profile,
+        R->Content.{{protoDict.Command}}.version[0],
+        R->Content.{{protoDict.Command}}.version[1],
+        R->Content.{{protoDict.Command}}.version[2],
+        R->Content.{{protoDict.Command}}.version[3]);
+*/
+}
+{% endif %}
+
+{%- if protoDict.Response %}
+/**
+ * {{proto}} response
+ */
+void XSTP_{{proto}}_resp_build (XSTP_resp R, randctx64 *rctx, ub8 magic, tpl_bin *B)
+{
+    tpl_bin tbcont = {0, 0};
+    R->magic = magic;
+
+    do {
+        tpl_node *tn;
+        UT_array *pairs;
+
+        pairs = kvpairs_new({{ protoDict.Response.keys() | count }});
+        {% for memb, membDict in protoDict.Response.items() %}
+        {{membDict.render.Response.build}}
+        {%- endfor %}
+
+        tn = kvpairs_pack(pairs);
+
+        kvpairs_free(pairs);
+
+        if (dump_bin(tn, &tbcont) != 0) {
+            tpl_free(tn);
+            exitlog_oom("xstp");
+        }
+
+        tpl_free(tn);
+    } while(0);
+
+    xstp_response_build(&tbcont, &XSTP_COMMAND_{{protoDict.Command}}, rctx, R, B);
+
+    tplbin_free(&tbcont);
+}
+
+
+int XSTP_{{proto}}_resp_parse (void *msg, ub4 msgcb, ub8 magic, XSTP_resp R)
+{
+    int err;
+    ssize_t bufsz;
+
+    err = xstp_response_parse(msg, msgcb, magic, &XSTP_COMMAND_{{protoDict.Command}}, R);
+    if (err != XSTP_SUCCESS) {
+        return err;
+    }
+
+    /* TODO
+    bufsz = sizeof(R->Content.CONN.neuronid);
+    err = kvmap_get_str(&R->kvmap, "neuronid", R->Content.{{protoDict.Command}}.neuronid, &bufsz);
+    if (err != TPLUT_SOK) {
+        goto err_return;
+    }
+
+    bufsz = sizeof(R->Content.CONN.secret);
+    err = kvmap_get_str(&R->kvmap, "secret", R->Content.{{protoDict.Command}}.secret, &bufsz);
+    if (err != TPLUT_SOK) {
+        goto err_return;
+    }
+
+    bufsz = sizeof(R->Content.CONN.profile);
+    err = kvmap_get_str(&R->kvmap, "profile", R->Content.{{protoDict.Command}}.profile, &bufsz);
+    if (err != TPLUT_SOK) {
+        goto err_return;
+    }
+
+    err = kvmap_get_bin_cpy(&R->kvmap, "version", &R->Content.{{protoDict.Command}}.version, sizeof(R->Content.{{protoDict.Command}}.version));
+    if (err != TPLUT_SOK) {
+        goto err_return;
+    }
+    */
+
+    kvmap_uninit(&R->kvmap);
+    kvpairs_free(R->pairs);
+    return XSTP_SUCCESS;
+
+err_return:
+
+    kvmap_uninit(&R->kvmap);
+    kvpairs_free(R->pairs);
+    return XSTP_ERROR;
+}
+
+
+void XSTP_{{proto}}_resp_print (const XSTP_resp R)
+{
+    int len;
+    char envbuf[256];
+
+    len = XSTP_env_print(&R->Envelope, envbuf, sizeof envbuf);
+/*
+    printf("%%.*s\n"
+        ".neuronid=%%s\n"
+        ".secret=%%s\n"
+        ".profile=%%s\n"
+        ".version=%%d.%%d.%%d.%%d\n",
+        len, envbuf,
+        R->Content.{{protoDict.Command}}.neuronid,
+        R->Content.{{protoDict.Command}}.secret,
+        R->Content.{{protoDict.Command}}.profile,
+        R->Content.{{protoDict.Command}}.version.verstr[0],
+        R->Content.{{protoDict.Command}}.version.verstr[1],
+        R->Content.{{protoDict.Command}}.version.verstr[2],
+        R->Content.{{protoDict.Command}}.version.verstr[3]);
+*/
+}
+{% endif %}
+{%- endfor %}

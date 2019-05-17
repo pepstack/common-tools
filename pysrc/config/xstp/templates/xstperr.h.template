@@ -1,0 +1,41 @@
+{{license_header}}
+/**
+ * xstperr.h
+ *   module error
+ *
+ * @author: master@pepstack.com
+ * @version: 1.0
+ * @create: 2019-05-09
+ * @update: 2019-05-11 09:28:00
+ */
+
+#ifndef XSTPERR_H_INCLUDED
+#define XSTPERR_H_INCLUDED
+
+#if defined(__cplusplus)
+extern "C"
+{
+#endif
+
+/**
+ * xstp result error
+ */
+#define XSTP_SUCCESS    0
+#define XSTP_ERROR    (-1)
+
+#define XSTP_ERR_TPL_LOAD    (-10)
+#define XSTP_ERR_TPL_PACK    (-11)
+#define XSTP_ERR_TPL_UNPACK  (-12)
+#define XSTP_ERR_ENV_UNPACK  (-13)
+
+#define XSTP_ERR_PROTOCOL    (-14)
+#define XSTP_ERR_COMMAND     (-15)
+#define XSTP_ERR_PROTOVER    (-16)
+#define XSTP_ERR_ENCRYPT     (-17)
+#define XSTP_ERR_CHECKSUM    (-18)
+
+#if defined(__cplusplus)
+}
+#endif
+
+#endif /* XSTPERR_H_INCLUDED */

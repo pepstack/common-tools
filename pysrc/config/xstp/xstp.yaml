@@ -1,0 +1,151 @@
+#####################################################################
+# xstp.yaml
+#
+# 可扩展的安全传输协议 (XSTP) 配置文件. 必须以 utf-8 编码! 系统自动会生成以下文件:
+#
+#   xstpapi.h
+#   xstpapi.c
+#   xstpdef.h
+#   xstperr.h
+#
+# 2019-05-12
+#
+# Type  Description 	            Required argument type
+#-----------------------------------------------------------
+#  j    16-bit signed int           int16_t* or equivalent
+#  v    16-bit unsigned int         uint16_t* or equivalent
+#  i    32-bit signed int           int32_t* or equivalent
+#  u    32-bit unsigned int         uint32_t* or equivalent
+#  I    64-bit signed int           int64_t* or equivalent
+#  U    64-bit unsigned int         uint64_t* or equivalent
+#  c    character (signed char)     char*
+#  b    byte (unsigned char)        unsigned char*
+#  s    string                      char**
+#  f    64-bit double precision     double* (varies by platform)
+#  B    binary with variable size   tpl_bin*
+#####################################################################
+Author: master@pepstack.com
+Create: '2019-05-09'
+License: license_header.txt
+Version: 1.0
+
+
+#######################################
+# 常量预定义
+#   系统将自定义的常量生成在
+#
+#   xstpdef.h
+#######################################
+Constants:
+    SYCFG_NEURONID_LEN_MAX: 40
+    SYCFG_SECRET_LEN_MAX: 40
+    SYCFG_PROFILE_LEN_MAX: 160
+    XSTP_PROTOCOL_MAJOR_VER: 1
+    XSTP_PROTOCOL_MINOR_VER: 0
+
+
+#######################################
+# 定义私有协议
+#   每个协议 $(proto) 都会生成一个类型:
+#
+#    type struct xstp_$(proto)_t {...};
+#
+#   和与之配套的APIs:
+#
+#    1) XSTP_$(proto)_req_build
+#    2) XSTP_$(proto)_req_parse
+#    3) XSTP_$(proto)_req_print
+#
+#    4) XSTP_$(proto)_resp_build
+#    5) XSTP_$(proto)_resp_parse
+#    6) XSTP_$(proto)_resp_print
+#######################################
+Protocols:
+    # ping_t
+    ping:
+        Comment: |
+            Ping命令
+
+        Command: PING
+
+        Request:
+            sessionid:
+                Type: U
+                Comment: 连接会话ID
+
+            sesstoken:
+                Type: U
+                Comment: 连接会话令牌
+
+        Response:
+            # ub4 status;
+            status:
+                Type: u
+                Comment: 状态码
+
+            # ub8 sessionid;
+            sessionid:
+                Type: U
+                Comment: 连接会话ID
+
+            sesstoken:
+                Type: U
+                Comment: 连接会话令牌
+
+    # connect_t
+    connect:
+        Comment: |
+            连接命令
+
+        Command: CONN
+
+        Request:
+            # char neuronid[SYCFG_NEURONID_LEN_MAX + 1];
+            neuronid:
+                Type: s
+                Length: SYCFG_NEURONID_LEN_MAX
+                Comment: 客户端 ID
+
+            secret:
+                Type: s
+                Length: SYCFG_SECRET_LEN_MAX
+                Comment: 密码
+
+            profile:
+                Type: s
+                Length: SYCFG_PROFILE_LEN_MAX
+                Comment: 客户端描述
+
+            version:
+                Type: b
+                Length: 4
+                Comment: 客户端版本
+
+        Response:
+            # ub4 status;
+            status:
+                Type: u
+                Comment: 状态码
+
+            # ub8 sessionid;
+            sessionid:
+                Type: U
+                Comment: 连接会话ID
+
+            sesstoken:
+                Type: U
+                Comment: 连接会话令牌
+
+            sesstime:
+                Type: u
+                Comment: 连接会话时间(秒)
+
+            profile:
+                Type: s
+                Length: SYCFG_PROFILE_LEN_MAX
+                Comment: 服务端描述
+
+            version:
+                Type: b
+                Length: 4
+                Comment: 服务端版本

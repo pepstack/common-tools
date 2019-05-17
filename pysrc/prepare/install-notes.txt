@@ -1,0 +1,24 @@
+## for ubuntu python2.7
+
+### fix bug: pyconfig.h not found 
+sudo apt install python-dev
+
+### install yaml
+./configure
+make && sudo make install
+
+
+### install PyYaml
+
+python setup.py build
+sudo python setup.py install
+
+### install setuptools
+python setup.py build
+sudo python setup.py install
+
+### install jinja2
+python setup.py build
+sudo python setup.py install
+
+Now you can enjoy it! 

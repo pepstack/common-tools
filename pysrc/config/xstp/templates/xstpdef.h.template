@@ -1,0 +1,156 @@
+{{license_header}}
+/**
+ * xstpdef.h
+ *   {{module}} type definition
+ *
+ * @author: {{author}}
+ * @version: {{version}}
+ * @create: {{create}}
+ * @update: {{update}}
+ */
+#ifndef XSTPDEF_H_INCLUDED
+#define XSTPDEF_H_INCLUDED
+
+#if defined(__cplusplus)
+extern "C"
+{
+#endif
+
+#include "tplut.h"
+#include "common/rand2.h"
+
+{% for key, val in dictcfg.Constants.items() %}
+#define {{key}}  {{(val)}}
+{%- endfor %}
+
+static union { char c[4]; ub4 tag; } XSTP_PROTOCOL_TAG = { {'X','S','T','P'} };
+{% for proto, protoDict in dictcfg.Protocols.items() %}
+static union { char c[4]; ub4 tag; } XSTP_COMMAND_{{protoDict.Command}} = { {'{{protoDict.Command[0]}}', '{{protoDict.Command[1]}}', '{{protoDict.Command[2]}}', '{{protoDict.Command[3]}}'} };
+{%- endfor %}
+
+#ifdef _MSC_VER
+#  pragma pack(1)
+#endif
+typedef struct xstp_envelope_t
+{
+    union {
+        char proto[4];
+        ub4 protocol;
+    };
+
+    union {
+        struct {
+            ub1 major_ver;
+            ub1 minor_ver;
+            ub1 __unused_ver[2];
+        };
+        ub4 version;
+    };
+
+    /* request command or result for response */
+    union {
+        char cmd[4];
+        ub4 command;
+    };
+
+    /* size in bytes of content follows envelope */
+    ub4 content_sz;
+
+    /* bit flags for optional fields */
+    union {
+        struct {
+            unsigned bf_timestamp : 1;
+            unsigned bf_randnum   : 1;
+            unsigned bf_checksum  : 1;
+            unsigned bf_encrypt   : 1;
+        };
+
+        ub4 bitflags;
+    };
+
+    /* optional fields depend on bitflags */
+    ub8 timestamp;
+    ub8 randnum;
+    ub4 checksum;     /* crc32 signature for chunk = 19843324 */
+
+    /* cipher=rc4(randnum, magic); encrypt=md5sum(cipher) */
+    ub16_digit_t encrypt;
+} GNUC_PACKED ARM_PACKED xstp_envelope_t;
+#ifdef _MSC_VER
+#  pragma pack()
+#endif
+
+
+typedef struct xstp_request_t
+{
+    xstp_envelope_t Envelope;
+
+    union {
+      {% for proto, protoDict in dictcfg.Protocols.items() %}
+        {%- if protoDict.Request %}
+        #ifdef _MSC_VER
+        #  pragma pack(1)
+        #endif
+        struct {
+          {% for memb, membDict in protoDict.Request.items() %}
+            {%- if membDict.Comment %}
+            /* {{membDict.Comment}} */
+            {%- endif %}
+            {{membDict.render.membdesc}};
+          {% endfor %}
+        } GNUC_PACKED ARM_PACKED {{protoDict.Command}};
+        #ifdef _MSC_VER
+        #  pragma pack()
+        #endif
+        {%- endif %}
+      {% endfor %}
+    } Content;
+    
+    /* private members */
+    ub8 magic;
+    ub8 cipher;
+
+    UT_array *pairs;
+    kvmap_t kvmap;
+} xstp_request_t;
+
+
+typedef struct xstp_response_t
+{
+    xstp_envelope_t Envelope;
+
+    union {
+      {% for proto, protoDict in dictcfg.Protocols.items() %}
+        {%- if protoDict.Request %}
+        #ifdef _MSC_VER
+        #  pragma pack(1)
+        #endif
+        struct {
+          {% for memb, membDict in protoDict.Response.items() %}
+            {%- if membDict.Comment %}
+            /* {{membDict.Comment}} */
+            {%- endif %}
+            {{membDict.render.membdesc}};
+          {% endfor %}
+        } GNUC_PACKED ARM_PACKED {{protoDict.Command}};
+        #ifdef _MSC_VER
+        #  pragma pack()
+        #endif
+        {%- endif %}
+      {% endfor %}
+    } Content;
+
+    /* private members */
+    ub8 magic;
+    ub8 cipher;
+
+    UT_array *pairs;
+    kvmap_t kvmap;
+} xstp_response_t;
+
+
+#if defined(__cplusplus)
+}
+#endif
+
+#endif /* XSTPDEF_H_INCLUDED */

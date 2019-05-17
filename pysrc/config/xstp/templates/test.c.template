@@ -1,0 +1,131 @@
+{{license_header}}
+
+/**
+ * @file: test.c
+ *    xstp test application
+ *
+ * @author: {{dictcfg.Author}}
+ * @version: {{dictcfg.Version}}
+ * @create: {{dictcfg.Create}}
+ * @update: {{dictcfg.Update}}
+ */
+
+#include "xstpapi.h"
+
+#include <math.h>
+
+#include "common/crc32.h"
+#include "common/md5sum.h"
+#include "common/rc4.h"
+
+
+void test_tplut (int id, int num)
+{
+	int len;
+	char key[30];
+	char val[30];
+	UT_array * pairs;
+	tpl_bin tb;
+
+	int capacity = num;
+
+	pairs = kvpairs_new(capacity);
+
+	while (num-- > 0) {
+		snprintf(key, sizeof key, "(%%d) key:%%d", id, num);
+		len = snprintf(val, sizeof val, "(%%d) val:%%d", id, num);
+		kvpairs_add(pairs, key, 's', val, len + 1);
+	}
+
+	kvpairs_print(pairs);
+
+	printf("kvpairs_pack.\n");
+	tpl_node *tn = kvpairs_pack(pairs);
+
+	printf("kvpairs_free.\n");
+	kvpairs_free(pairs);
+
+	printf("dump_bin.\n");
+	if (dump_bin(tn, &tb) == 0) {
+		printf("dump_bin ok: sz=%%u bytes.\n", tb.sz);
+		
+		printf("load_bin\n");
+		tpl_node *tn2 = load_bin(&tb);
+		if (tn2) {
+			printf("load_bin ok.\n");
+			tpl_free(tn2);
+		}
+
+		UT_array * kvs = kvpairs_unpack(&tb, capacity);
+		if (kvs) {
+			printf("kvpairs_unpack out ok:\n");
+			kvpairs_print(kvs);
+
+			kvmap_t kvmap;
+			kvmap_init(&kvmap);
+
+			kvpairs_to_map(kvs, &kvmap);
+
+			kvmap_uninit(&kvmap);
+
+			kvpairs_free(kvs);
+		}
+
+		free(tb.addr);
+	}
+
+	printf("tpl_free.\n");
+	tpl_free(tn);
+}
+
+
+int main (int argc, char *argv[])
+{
+    ub8 magic = 18964045890;
+
+    char buf[256];
+
+	int i, len, rc;
+
+	for (i = 0; i < 1; i++) {
+		test_tplut(i, 30);
+	}
+
+	printf("all is ok.\n");
+
+    randctx64  rctx;
+
+    tpl_bin B = {0, 0};
+
+    xstp_request_t R;
+
+    randctx64_init(&rctx, nowtime_msec());
+
+    bzero(&R, sizeof R);
+
+    strcpy(R.Content.CONN.neuronid, "test123");
+    strcpy(R.Content.CONN.secret, "testXXX");
+    strcpy(R.Content.CONN.profile, "neuron @Red Hat Enterprise Linux Server release 6.4 (Santiago)");
+
+    R.Content.CONN.version[0] = 1;
+    R.Content.CONN.version[1] = 0;
+    R.Content.CONN.version[2] = 2;
+    R.Content.CONN.version[3] = 3;
+
+    printf("\n**** XSTP_connect_req_build:\n");
+    XSTP_connect_req_build(&R, &rctx, magic, &B);
+    XSTP_connect_req_print(&R);
+
+    len = XSTP_env_print(&R.Envelope, buf, sizeof buf);
+
+    printf("\n**** XSTP_connect_req_parse:\n");
+    bzero(&R, sizeof R);
+    rc = XSTP_connect_req_parse(B.addr, B.sz, magic, &R);
+    tplbin_free(&B);
+
+    if (rc == 0) {
+        XSTP_connect_req_print(&R);
+    }
+
+	return (0);
+}
