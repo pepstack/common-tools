@@ -33,7 +33,7 @@ class AutoExitPid(object):
         with lock:
             fd = open(pidfile, 'a')
             with fd:
-                fd.write("{}=>{}\n".format(self._pidstr, pname))
+                fd.write("%s=>%s\n" % (self._pidstr, pname))
         pass
 
 
@@ -59,8 +59,8 @@ class GracefulExitEvent(object):
         self.stopfile = appfile + ".FORCESTOP"
         self.pidfile = appfile + ".PID"
 
-        util.info("stopfile: {}".format(self.stopfile))
-        util.info("pidfile: {}".format(self.pidfile))
+        util.info("stopfile: " + self.stopfile)
+        util.info("pidfile: " + self.pidfile)
 
         self.curtime = time.time()
         pass
@@ -87,7 +87,7 @@ class GracefulExitEvent(object):
                 sys.exit(-1)
 
         for pname in self.workers.keys():
-            util.info("{}: worker starting...".format(pname))
+            util.info(pname + ": worker starting...")
             self.workers[pname].start()
         pass
 
@@ -178,7 +178,7 @@ class GracefulExitEvent(object):
         # block wait child processes exit
         for pname in self.workers.keys():
             self.workers[pname].join()
-            util.warn("{}: worker stopped.".format(pname))
+            util.warn(pname + ": worker stopped.")
 
         with self.glock:
             util.remove_file_nothrow(self.pidfile)
