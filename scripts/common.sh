@@ -2,7 +2,7 @@
 #
 # @file
 #
-# @author: zhangliang@ztgame
+# @author: cheungmine@qq.com
 #
 # @create: 2014-12-18
 #

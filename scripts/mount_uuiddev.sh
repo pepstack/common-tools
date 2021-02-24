@@ -6,7 +6,7 @@
 #
 #  el6, el7
 #
-# @author: zhangliang
+# @author: cheungmine@qq.com
 #
 # @create: 2018-05-17
 #
