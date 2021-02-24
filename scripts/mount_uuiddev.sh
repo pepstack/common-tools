@@ -259,7 +259,7 @@ echoinfo "挂载硬盘设备($DEVDISK)到目录($MNTROOT): 成功."
 
 devstr=$(blkid_get_dev "$DEVDISK")
 uuidstr=$(blkid_get_uuid "$DEVDISK")
-typestr=$(blkid_get_uuid "$DEVDISK")
+typestr=$(blkid_get_type "$DEVDISK")
 
 
 if [ "$devstr" == "" ]; then
