@@ -6,7 +6,7 @@
 #
 # @create: 2014-12-18
 #
-# @update: 2019-02-18
+# @update: 2021-02-18
 #
 ########################################################################
 # Error Codes:
@@ -329,6 +329,34 @@ function validate_ipv4() {
 }
 
 
+# findstrindex "$(mount -l)" "/dev/sdb "
+function findstrindex()
+{
+    echo "$1" | awk -F '\n' '{for (i=1;i<=NF;i++) print $i}' | grep -n "$2" | cut -d ":" -f 1
+}
+
+
+function blkid_get_dev()
+{
+    local fieldstr=$(echo "`blkid $1`" | sed 's/\"//g' | awk '{print $1}')
+    echo ${fieldstr%:}
+}
+
+
+function blkid_get_uuid()
+{
+    local fieldstr=$(echo "`blkid $1`" | sed 's/\"//g' | awk '{print $2}')
+    echo ${fieldstr#*UUID=}
+}
+
+
+function blkid_get_type()
+{
+    local fieldstr=$(echo "`blkid $1`" | sed 's/\"//g' | awk '{print $3}')
+    echo ${fieldstr#*TYPE=}
+}
+
+
 # 字符串分割成数组
 #   strsplit "I,am,a,boy" ","
 #
@@ -560,3 +588,4 @@ function linux_os_alias() {
         echo ""
     fi
 }
+
